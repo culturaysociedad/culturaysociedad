@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 // @ts-ignore
 import { Bell } from 'lucide-react';
+import { toast } from 'sonner';
 
 export interface Notification {
   id: string;
@@ -30,6 +31,7 @@ const FILTERS = [
 const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, onMarkAsRead }) => {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [lastNotiId, setLastNotiId] = useState<string | null>(null);
   const unreadCount = notifications.filter(n => !n.read).length;
 
   useEffect(() => {
@@ -40,6 +42,26 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ notifications, 
     }
     return () => { document.body.style.overflow = ''; };
   }, [open]);
+
+  // Mostrar toast emergente para nuevas notificaciones
+  useEffect(() => {
+    if (notifications.length === 0) return;
+    const latest = notifications[0];
+    if (lastNotiId && latest.id !== lastNotiId) {
+      toast(latest.title + ': ' + latest.description, {
+        action: {
+          label: 'Ver',
+          onClick: () => {
+            if (latest.link) window.location.href = latest.link;
+            setOpen(true);
+          }
+        },
+        duration: 6000
+      });
+    }
+    setLastNotiId(latest.id);
+    // eslint-disable-next-line
+  }, [notifications]);
 
   let filtered = notifications;
   if (filter === 'unread') filtered = notifications.filter(n => !n.read);
