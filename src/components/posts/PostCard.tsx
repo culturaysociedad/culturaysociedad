@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Heart, MessageCircle, Bookmark, Share2, MoreHorizontal } from 'lucide-react';
-import { Post, formatPostDate, getUserById, usePostStore } from '../../store/postStore';
+import { Post, formatPostDate, getUserById } from '../../store/postStore';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../lib/supabase';
 import { toast } from 'sonner';
@@ -8,37 +8,49 @@ import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Link } from 'react-router-dom';
 import ReactDOM from 'react-dom';
-import { Swiper, SwiperSlide } from 'swiper/react';
-import { Navigation, Pagination } from 'swiper/modules';
-import 'swiper/css';
-import 'swiper/css/navigation';
-import 'swiper/css/pagination';
+import MediaCarousel, { MediaItem } from './subcomponents/MediaCarousel';
+import LinkPreview, { LinkData } from './subcomponents/LinkPreview';
+import Poll, { PollData } from './subcomponents/Poll';
+import CommentThread, { CommentData } from '../shared/CommentThread';
+import ReactionsBar, { ReactionData } from '../shared/ReactionsBar';
+import { useDebounce } from 'use-debounce';
 
 interface PostCardProps {
   post: Post;
   disableCardNavigation?: boolean;
   onDeleted?: () => void;
+  user: { nombre: string; avatar: string; verificado?: boolean; id?: string };
+  media?: MediaItem[];
+  text: string;
+  backgroundColor?: string;
+  linkData?: LinkData;
+  pollData?: PollData;
+  onVote?: (optionId: string) => void;
 }
 
-const urlRegex = /(https?:\/\/[\w\-\.\/?#&=;%+~]+)|(www\.[\w\-\.\/?#&=;%+~]+)/gi;
-
-const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDeleted }) => {
+const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDeleted, user, media, text, backgroundColor, linkData, pollData, onVote }) => {
   const [isCommentExpanded, setIsCommentExpanded] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [postUser, setPostUser] = useState<any>(null);
   const [commentUsers, setCommentUsers] = useState<Record<string, any>>({});
   const [loadingUser, setLoadingUser] = useState(true);
-  const [loadingComments, setLoadingComments] = useState(true);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showMenu, setShowMenu] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-
-  const { user } = useAuthStore();
-  const { toggleLike, addComment, toggleFavorite } = usePostStore();
-  const commentInputRef = React.useRef<HTMLInputElement>(null);
-  const menuButtonRef = React.useRef<HTMLButtonElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const commentInputRef = useRef<HTMLInputElement>(null);
+  const { user: currentUser } = useAuthStore();
+  const [likes, setLikes] = useState<string[]>(post.likes);
+  const [comments, setComments] = useState(post.comments);
+  const [isLiked, setIsLiked] = useState(currentUser ? post.likes.includes(currentUser.id) : false);
+  const [isFavorite, setIsFavorite] = useState(post.isFavorite);
+  const [isLoadingReaction, setIsLoadingReaction] = useState(false);
+  const [isLoadingComment, setIsLoadingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const [showMentionList, setShowMentionList] = useState(false);
+  const [debouncedMentionQuery] = useDebounce(mentionQuery, 200);
 
   // Cargar usuario del post
   useEffect(() => {
@@ -54,63 +66,112 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
     return () => { isMounted = false; };
   }, [post.userId]);
 
-  // Cargar usuarios de los comentarios
+  // Optimización: carga de usuarios de comentarios con cache y fallback
   useEffect(() => {
     let isMounted = true;
-    setLoadingComments(true);
+    const users: Record<string, any> = {};
+    const ids = Array.from(new Set(comments
+      .map(c => c.userId)
+      .filter(id => typeof id === 'string' && id && id !== 'undefined' && /^[0-9a-fA-F-]{36}$/.test(id))
+    ));
     (async () => {
-      const ids = Array.from(new Set(post.comments.map(c => c.userId)));
-      const users: Record<string, any> = {};
       await Promise.all(ids.map(async (id) => {
-        const u = await getUserById(id);
-        if (u) users[id] = u;
+        if (!id || id === 'undefined') return;
+        if (users[id]) return; // cache local
+        if (id === user?.id) {
+          users[id] = user;
+        } else {
+          try {
+            const u = await getUserById(id);
+            users[id] = u || { displayName: 'Usuario', avatar: '/default-avatar.png' };
+          } catch {
+            users[id] = { displayName: 'Usuario', avatar: '/default-avatar.png' };
+          }
+        }
       }));
-      if (isMounted) {
-        setCommentUsers(users);
-        setLoadingComments(false);
-      }
+      if (isMounted) setCommentUsers(users);
     })();
     return () => { isMounted = false; };
-  }, [post.comments]);
+  }, [comments, user]);
 
-  const isLiked = user ? post.likes.includes(user.id) : false;
-  
-  const handleLike = () => {
-    if (user) {
-      toggleLike(post.id, user.id);
+  // Sincronizar likes y comentarios con props.post
+  useEffect(() => {
+    setLikes(post.likes);
+    setComments(post.comments);
+    setIsLiked(currentUser ? post.likes.includes(currentUser.id) : false);
+    setIsFavorite(post.isFavorite);
+  }, [post, currentUser]);
+
+  // Reacción (like)
+  const handleLike = async () => {
+    if (!currentUser || isLoadingReaction) return;
+    setIsLoadingReaction(true);
+    try {
+      if (isLiked) {
+        await supabase.from('reacciones_post').delete().eq('post_id', post.id).eq('usuario_id', currentUser.id);
+        setLikes(likes.filter(id => id !== currentUser.id));
+      } else {
+        await supabase.from('reacciones_post').insert({ post_id: post.id, usuario_id: currentUser.id, tipo: 'like' });
+        setLikes([...likes, currentUser.id]);
+      }
+      setIsLiked(!isLiked);
+    } catch {
+      toast.error('Error al actualizar reacción');
+    } finally {
+      setIsLoadingReaction(false);
     }
   };
-  
+
+  // Comentario
   const handleComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (user && commentText.trim()) {
-      await addComment(post.id, user.id, commentText);
+    setCommentError(null);
+    if (!currentUser) {
+      setCommentError('Debes iniciar sesión para comentar.');
+      return;
+    }
+    if (!commentText.trim()) {
+      setCommentError('El comentario no puede estar vacío.');
+      return;
+    }
+    setIsLoadingComment(true);
+    try {
+      const { data, error } = await supabase.from('comentarios_post').insert({ post_id: post.id, autor_id: currentUser.id, contenido: commentText.trim() }).select().single();
+      if (error) throw error;
+      setComments([...comments, { id: data.id, userId: data.autor_id, content: data.contenido, createdAt: data.creado_en }]);
       setCommentText('');
-      // Refrescar usuarios de comentarios tras agregar uno nuevo
-      const ids = Array.from(new Set([...post.comments.map(c => c.userId), user.id]));
-      const users: Record<string, any> = {};
-      await Promise.all(ids.map(async (id) => {
-        const u = await getUserById(id);
-        if (u) users[id] = u;
-      }));
-      setCommentUsers(users);
+    } catch {
+      setCommentError('Error al agregar comentario.');
+    } finally {
+      setIsLoadingComment(false);
     }
   };
-  
-  const handleFavorite = () => {
-    toggleFavorite(post.id);
-  };
-  
-  const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: post.content?.slice(0, 60) || 'Post de Red Viento Sur',
-        text: post.content,
-        url: window.location.origin + '/posts/' + post.id
-      }).catch(() => {});
-    } else {
-      navigator.clipboard.writeText(window.location.origin + '/posts/' + post.id);
-      toast.success('¡Enlace copiado!');
+
+  // Asegura que handleShare esté correctamente definido y asignado al botón
+  const handleShare = async () => {
+    try {
+      const url = window.location.origin + '/posts/' + post.id;
+      if (navigator.share) {
+        await navigator.share({
+          title: post.content?.slice(0, 60) || 'Post de Red Viento Sur',
+          text: post.content,
+          url
+        });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+        toast.success('¡Enlace copiado!');
+      } else {
+        // Fallback: input temporal
+        const input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        toast.success('¡Enlace copiado!');
+      }
+    } catch (e) {
+      toast.error('No se pudo compartir el enlace');
     }
   };
 
@@ -164,6 +225,150 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
       }
       return next;
     });
+  };
+  
+  // Estados y funciones para edición y reacciones de comentarios
+  const [commentReactions, setCommentReactions] = useState<Record<string, { isReacted: boolean; likesCount: number }>>({});
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const reactions: Record<string, { isReacted: boolean; likesCount: number }> = {};
+    comments.forEach(comment => {
+      if (Array.isArray(comment.reactions)) {
+        reactions[comment.id] = {
+          isReacted: comment.reactions.some(r => r.tipo === 'like' && r.usuario_id === currentUser.id),
+          likesCount: comment.reactions.filter(r => r.tipo === 'like').length
+        };
+      } else {
+        reactions[comment.id] = { isReacted: false, likesCount: 0 };
+      }
+    });
+    setCommentReactions(reactions);
+  }, [comments, currentUser]);
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!window.confirm('¿Eliminar este comentario?')) return;
+    try {
+      await supabase.from('comentarios_post').delete().eq('id', commentId);
+      setComments(comments.filter(c => c.id !== commentId));
+    } catch {
+      toast.error('Error al eliminar comentario');
+    }
+  };
+  const handleCommentLike = async (comment: any) => {
+    if (!currentUser) return;
+    const prev = commentReactions[comment.id] || { isReacted: false, likesCount: 0 };
+    try {
+      if (prev.isReacted) {
+        await supabase.from('reacciones_comentario_post').delete().eq('comentario_id', comment.id).eq('usuario_id', currentUser.id);
+        setCommentReactions({
+          ...commentReactions,
+          [comment.id]: { isReacted: false, likesCount: Math.max(0, prev.likesCount - 1) }
+        });
+      } else {
+        await supabase.from('reacciones_comentario_post').insert({ comentario_id: comment.id, usuario_id: currentUser.id, tipo: 'like' });
+        setCommentReactions({
+          ...commentReactions,
+          [comment.id]: { isReacted: true, likesCount: prev.likesCount + 1 }
+        });
+      }
+    } catch {
+      toast.error('Error al reaccionar');
+    }
+  };
+  
+  // Log de depuración para detectar datos vacíos
+  useEffect(() => {
+    if (!post || !post.id) {
+      // eslint-disable-next-line no-console
+      console.warn('PostCard: post vacío o sin id', post);
+    }
+    if (!user || !user.id) {
+      // eslint-disable-next-line no-console
+      console.warn('PostCard: user vacío o sin id', user);
+    }
+  }, [post, user]);
+  
+  // Adaptar comentarios y reacciones al formato de los componentes compartidos
+  const commentThreadData: CommentData[] = comments.map(c => ({
+    id: c.id,
+    userId: c.userId,
+    userName: commentUsers[c.userId]?.displayName || 'Usuario',
+    userAvatar: commentUsers[c.userId]?.avatar || '/default-avatar.png',
+    content: c.content,
+    createdAt: c.createdAt,
+    parent_id: c.parent_id || null,
+    replies: [],
+    canEdit: !!(currentUser && c.userId === currentUser.id),
+    canDelete: !!(currentUser && c.userId === currentUser.id)
+  }));
+  const reactionsData: ReactionData[] = [
+    { emoji: '❤️', count: likes.length, reacted: isLiked },
+    // TODO: mapear otros tipos de reacciones si existen
+  ];
+  
+  // Definir handleEditComment en el scope correcto
+  const handleEditComment = async (commentId: string, newContent: string) => {
+    if (!newContent.trim()) return;
+    try {
+      await supabase.from('comentarios_post').update({ contenido: newContent }).eq('id', commentId);
+      setComments(comments.map(c => c.id === commentId ? { ...c, content: newContent } : c));
+      toast.success('Comentario editado');
+    } catch {
+      toast.error('Error al editar comentario');
+    }
+  };
+
+  // Permitir respuestas anidadas
+  const handleReplyComment = async (parentId: string, content: string) => {
+    if (!currentUser) return;
+    try {
+      const { data, error } = await supabase.from('comentarios_post').insert({ post_id: post.id, autor_id: currentUser.id, contenido: content, parent_id: parentId }).select().single();
+      if (error) throw error;
+      setComments([...comments, { id: data.id, userId: data.autor_id, content: data.contenido, createdAt: data.creado_en, parent_id: data.parent_id }]);
+    } catch {
+      toast.error('Error al responder comentario.');
+    }
+  };
+
+  // Buscar usuarios para autocompletado de menciones
+  useEffect(() => {
+    if (!debouncedMentionQuery) {
+      setMentionResults([]);
+      return;
+    }
+    (async () => {
+      const { data } = await supabase
+        .from('usuarios')
+        .select('id, nombre_usuario, nombre_completo, avatar_url')
+        .ilike('nombre_usuario', `%${debouncedMentionQuery}%`)
+        .limit(5);
+      setMentionResults(data || []);
+    })();
+  }, [debouncedMentionQuery]);
+
+  // Detectar @ para autocompletado
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setCommentText(value);
+    setCommentError(null);
+    const match = value.match(/@([\w\d_]{2,})$/);
+    if (match) {
+      setMentionQuery(match[1]);
+      setShowMentionList(true);
+    } else {
+      setShowMentionList(false);
+    }
+  };
+
+  // Insertar mención seleccionada
+  const handleMentionSelect = (user: any) => {
+    const regex = /@([\w\d_]{2,})$/;
+    const match = commentText.match(regex);
+    if (!match) return;
+    const before = commentText.slice(0, match.index);
+    setCommentText(before + '@' + user.nombre_usuario + ' ');
+    setShowMentionList(false);
   };
   
   if (!post || !postUser) {
@@ -283,274 +488,158 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
       </div>
       
       {/* Post Media */}
-      {(Array.isArray((post as any).mediaUrls) && (post as any).mediaUrls.length > 0) ? (
-        <div className="relative pb-3">
-          <Swiper
-            modules={[Navigation, Pagination]}
-            navigation
-            pagination={{ clickable: true }}
-            className="w-full h-full rounded-xl"
-            style={{ maxWidth: '100%', maxHeight: 360 }}
-          >
-            {(post as any).mediaUrls.map((media: {url: string, type: string, name?: string}, idx: number) => (
-              media.type === 'image' ? (
-                <SwiperSlide key={media.url}>
-                  <img
-                    src={media.url}
-                    alt={`Imagen ${idx + 1}`}
-                    className="w-full h-[320px] object-cover rounded-xl border border-gray-200 dark:border-gray-800 cursor-pointer"
-                    onClick={() => { setLightboxIndex(idx); setLightboxOpen(true); }}
-                  />
-                </SwiperSlide>
-              ) : media.type === 'video' ? (
-                <SwiperSlide key={media.url}>
-                  <video src={media.url} controls className="w-full h-[320px] object-cover rounded-xl border border-gray-200 dark:border-gray-800" />
-                </SwiperSlide>
-              ) : media.type === 'audio' ? (
-                <SwiperSlide key={media.url}>
-                  <audio src={media.url} controls className="w-full" />
-                </SwiperSlide>
-              ) : media.type === 'document' ? (
-                <SwiperSlide key={media.url}>
-                  <div className="flex items-center justify-center h-[320px]">
-                    <a href={media.url} target="_blank" rel="noopener noreferrer" className="text-primary-600 underline">Ver documento {media.name || ''}</a>
-                  </div>
-                </SwiperSlide>
-              ) : null
-            ))}
-          </Swiper>
-          {/* Lightbox/Modal para imágenes */}
-          {lightboxOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setLightboxOpen(false)}>
-              <button
-                className="absolute top-4 right-4 text-white text-3xl font-bold bg-black/40 rounded-full p-2 hover:bg-black/70"
-                onClick={e => { e.stopPropagation(); setLightboxOpen(false); }}
-                aria-label="Cerrar"
-              >
-                ×
-              </button>
-              <button
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-white text-3xl font-bold bg-black/40 rounded-full p-2 hover:bg-black/70"
-                onClick={e => { e.stopPropagation(); setLightboxIndex(i => (i - 1 + (post as any).mediaUrls.length) % (post as any).mediaUrls.length); }}
-                aria-label="Anterior"
-              >
-                ‹
-              </button>
-              <img
-                src={(post as any).mediaUrls[lightboxIndex].url}
-                alt={`Imagen ampliada ${lightboxIndex + 1}`}
-                className="max-h-[80vh] max-w-[90vw] rounded-xl shadow-2xl border-4 border-white object-contain"
-                onClick={e => e.stopPropagation()}
-              />
-              <button
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-white text-3xl font-bold bg-black/40 rounded-full p-2 hover:bg-black/70"
-                onClick={e => { e.stopPropagation(); setLightboxIndex(i => (i + 1) % (post as any).mediaUrls.length); }}
-                aria-label="Siguiente"
-              >
-                ›
-              </button>
-              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white text-sm bg-black/40 rounded px-3 py-1">
-                {lightboxIndex + 1} / {(post as any).mediaUrls.length}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        // Soporte retrocompatibilidad mediaUrl único
-        <>
-          {post.mediaUrl && post.type === 'image' && (
-            <div className="relative pb-3 flex justify-center">
-              <img 
-                src={post.mediaUrl} 
-                alt="Post media" 
-                className="rounded-xl border border-gray-200 dark:border-gray-800 w-auto max-w-full max-h-[350px] object-contain shadow-sm hover:shadow-md transition-shadow duration-200"
-              />
-            </div>
-          )}
-          {post.mediaUrl && post.type === 'video' && (
-            <div className="relative pb-3 flex justify-center">
-              <video src={post.mediaUrl} controls className="rounded-xl border border-gray-200 dark:border-gray-800 w-auto max-w-full max-h-[350px] object-contain shadow-sm" />
-            </div>
-          )}
-          {post.mediaUrl && post.type === 'audio' && (
-            <div className="relative pb-3 flex items-center">
-              <audio src={post.mediaUrl} controls className="w-full" />
-            </div>
-          )}
-          {post.mediaUrl && post.type === 'document' && (
-            <div className="relative pb-3 flex items-center">
-              <a href={post.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 underline">Ver documento</a>
-            </div>
-          )}
-        </>
-      )}
-      
+      {media && media.length > 0 && <MediaCarousel media={media} />}
+      {/* Link Preview */}
+      {linkData && <LinkPreview link={linkData} />}
+      {/* Poll */}
+      {pollData && <Poll poll={pollData} onVote={onVote ?? (() => {})} />}
       {/* Post Content (TEXTO) debajo del media */}
-      <div className="px-4 pb-3 pt-2">
-        <p className="mb-3 text-gray-900 dark:text-white text-base leading-relaxed whitespace-pre-line break-words">{post.content}</p>
+      <div className="px-4 pb-3 pt-2" style={backgroundColor ? { backgroundColor } : {}}>
+        <span>{text}</span>
       </div>
-      {/* Enlaces en el contenido del post */}
-      {post.content && post.content.match(urlRegex) && (
-        <div className="mb-3 px-4">
-          {post.content.match(urlRegex)?.map((url, idx) => (
-            <div key={idx} className="mb-2">
-              <a
-                href={url.startsWith('http') ? url : `https://${url}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-600 underline break-all"
-              >
-                {url}
-              </a>
-            </div>
-          ))}
-        </div>
-      )}
-      
-      {/* Post Actions */}
-      <div className="px-4 py-2 flex items-center justify-between border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40 rounded-b-2xl">
-        <div className="flex items-center space-x-6">
-          <button 
-            onClick={handleLike}
-            className="flex items-center space-x-1 group"
-          >
-            <Heart 
-              className={`h-5 w-5 ${isLiked 
-                ? 'text-red-500 fill-red-500' 
-                : 'text-gray-600 dark:text-gray-400 group-hover:text-red-500'}`} 
-            />
-            <span className={`text-sm ${isLiked 
-              ? 'text-red-500' 
-              : 'text-gray-600 dark:text-gray-400 group-hover:text-red-500'}`}>
-              {post.likes.length}
-            </span>
-          </button>
-          
-          <button 
-            onClick={() => setIsCommentExpanded(!isCommentExpanded)}
-            className="flex items-center space-x-1 group"
-          >
-            <MessageCircle className="h-5 w-5 text-gray-600 dark:text-gray-400 group-hover:text-primary-500" />
-            <span className="text-sm text-gray-600 dark:text-gray-400 group-hover:text-primary-500">
-              {post.comments.length}
-            </span>
-          </button>
-          
-          <button 
-            onClick={handleShare}
-            className="flex items-center group"
-            title="Compartir"
-          >
-            <Share2 className="h-5 w-5 text-gray-600 dark:text-gray-400 group-hover:text-primary-500" />
-          </button>
-        </div>
-        
-        <button 
-          onClick={handleFavorite}
-          className="flex items-center group"
+      <div className="flex items-center gap-2 py-2 px-4 justify-start">
+        <ReactionsBar reactions={reactionsData} onReact={handleLike} />
+        <button
+          className="flex items-center gap-1 text-gray-500 hover:text-primary-600 text-sm font-medium focus:outline-none"
+          onClick={() => setIsCommentExpanded((v) => !v)}
+          aria-label="Mostrar comentarios"
+          type="button"
         >
-          <Bookmark 
-            className={`h-5 w-5 ${post.isFavorite 
-              ? 'text-primary-500 fill-primary-500' 
-              : 'text-gray-600 dark:text-gray-400 group-hover:text-primary-500'}`}
-          />
+          <MessageCircle className="w-5 h-5" />
+          {comments.length > 0 && (
+            <span className="ml-1 text-xs bg-gray-200 dark:bg-gray-700 rounded-full px-2 py-0.5">{comments.length}</span>
+          )}
         </button>
       </div>
-      
-      {/* Comments */}
-      {(post.comments.length > 0 || isCommentExpanded) && (
-        <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-b-xl">
-          {post.comments.length > 0 && (
-            <div className="mb-3 space-y-3">
-              {post.comments.slice(0, isCommentExpanded ? undefined : 2).map(comment => {
-                const commentUser = commentUsers[comment.userId];
-                return (
-                  <div key={comment.id} className="flex space-x-2">
-                    <div className="flex-shrink-0">
-                      <div className="avatar w-8 h-8">
-                        {loadingComments ? (
-                          <div className="w-8 h-8 bg-gray-200 rounded-full animate-pulse" />
-                        ) : (
-                          <img 
-                            src={commentUser?.avatar || '/default-avatar.png'} 
-                            alt={commentUser?.displayName || 'Usuario'} 
-                            className="avatar-img"
-                          />
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex-1">
-                      <div className="bg-white dark:bg-gray-900 p-2 rounded-lg">
-                        <p className="font-medium text-sm text-gray-900 dark:text-white">
-                          {loadingComments ? <span className="bg-gray-200 rounded w-16 h-3 inline-block animate-pulse" /> : commentUser?.displayName || 'Usuario'}
-                        </p>
-                        <p className="text-sm text-gray-700 dark:text-gray-300">
-                          {comment.content}
-                        </p>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {formatPostDate(comment.createdAt)}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              
-              {post.comments.length > 2 && !isCommentExpanded && (
-                <button 
-                  onClick={() => setIsCommentExpanded(true)}
-                  className="text-sm text-primary-600 dark:text-primary-400 font-medium"
+      {(comments.length > 0 || isCommentExpanded) && (
+        <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-b-xl border-t border-gray-200 dark:border-gray-700 transition-all duration-300">
+          <CommentThread
+            comments={commentThreadData}
+            onEdit={handleEditComment}
+            onDelete={handleDeleteComment}
+            onReply={handleReplyComment}
+            currentUserId={currentUser ? currentUser.id : undefined}
+          />
+        </div>
+      )}
+      {currentUser && (
+        <form onSubmit={handleComment} className="flex items-center space-x-2 relative mt-2">
+          <div className="avatar w-9 h-9">
+            <img 
+              src={currentUser.avatar || '/default-avatar.png'} 
+              alt={currentUser.displayName || 'Usuario'} 
+              className="avatar-img rounded-full object-cover border border-primary-200 dark:border-primary-700"
+            />
+          </div>
+          <input
+            type="text"
+            placeholder="Añade un comentario..."
+            className={`flex-1 bg-white dark:bg-gray-900 rounded-full px-4 py-2 text-sm border border-gray-300 dark:border-gray-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 shadow-sm transition-all ${commentError ? 'border-red-500' : ''}`}
+            value={commentText}
+            onChange={handleInputChange}
+            maxLength={300}
+            autoComplete="off"
+            disabled={isLoadingComment}
+            aria-invalid={!!commentError}
+            ref={commentInputRef}
+          />
+          {/* Lista de menciones */}
+          {showMentionList && mentionResults.length > 0 && (
+            <div className="absolute z-50 bottom-12 left-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg w-64 max-h-60 overflow-y-auto">
+              {mentionResults.map(user => (
+                <button
+                  key={user.id}
+                  className="flex items-center w-full px-3 py-2 hover:bg-primary-50 dark:hover:bg-primary-900/30 gap-2 text-left"
+                  onClick={() => handleMentionSelect(user)}
+                  type="button"
                 >
-                  View all {post.comments.length} comments
+                  <img src={user.avatar_url || '/default-avatar.png'} alt={user.nombre_usuario} className="w-6 h-6 rounded-full" />
+                  <span className="font-medium">@{user.nombre_usuario}</span>
+                  <span className="text-xs text-gray-400 ml-2">{user.nombre_completo}</span>
                 </button>
-              )}
+              ))}
             </div>
           )}
-          
-          {user && (
-            <form onSubmit={handleComment} className="flex items-center space-x-2 relative">
-              <div className="avatar w-8 h-8">
-                <img 
-                  src={user.avatar} 
-                  alt={user.displayName} 
-                  className="avatar-img"
-                />
-              </div>
-              <input
-                ref={commentInputRef}
-                type="text"
-                placeholder="Añade un comentario..."
-                className="flex-1 bg-white dark:bg-gray-900 rounded-full px-4 py-2 text-sm border border-gray-200 dark:border-gray-700 focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-              />
-              <button
-                type="button"
-                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
-                onClick={() => setShowEmojiPicker((v) => !v)}
-                aria-label="Insertar emoji"
-                tabIndex={-1}
-              >
-                <span role="img" aria-label="emoji">😊</span>
-              </button>
-              <button 
-                type="submit"
-                disabled={!commentText.trim()}
-                className="text-sm font-medium text-primary-600 dark:text-primary-400 disabled:opacity-50"
-              >
-                Publicar
-              </button>
-              {showEmojiPicker && (
-                <div className="absolute z-50 bottom-12 right-0">
-                  <Picker data={data} onEmojiSelect={handleEmojiSelect} theme="auto" />
-                </div>
-              )}
-            </form>
+          <button
+            type="button"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+            onClick={() => setShowEmojiPicker((v) => !v)}
+            aria-label="Insertar emoji"
+            tabIndex={-1}
+          >
+            <span role="img" aria-label="emoji">😊</span>
+          </button>
+          <button 
+            type="submit"
+            disabled={!commentText.trim() || isLoadingComment}
+            className="text-sm font-bold text-primary-600 dark:text-primary-400 disabled:opacity-50 px-3 py-1 rounded-full bg-primary-50 dark:bg-primary-900 hover:bg-primary-100 dark:hover:bg-primary-800 transition-all"
+          >
+            {isLoadingComment ? '...' : 'Publicar'}
+          </button>
+          {showEmojiPicker && (
+            <div className="absolute z-50 bottom-12 right-0">
+              <Picker data={data} onEmojiSelect={handleEmojiSelect} theme="auto" />
+            </div>
           )}
-        </div>
+          {commentError && (
+            <span className="absolute left-0 -bottom-6 text-xs text-red-500 font-medium">{commentError}</span>
+          )}
+        </form>
       )}
     </article>
   );
 };
 
 export default PostCard;
+
+/*
+// Ejemplos de uso
+
+// Post solo texto
+<PostCard
+  user={{ nombre: 'Ana', avatar: '/ana.png', verificado: true }}
+  date="2025-06-18T12:00:00Z"
+  text="¡Hola mundo! #bienvenidos @usuario"
+  stats={{ likes: 10, comentarios: 2, compartidos: 1 }}
+  onLike={() => {}}
+  onComment={() => {}}
+  onShare={() => {}}
+/>
+
+// Post con imagen y link preview
+<PostCard
+  user={{ nombre: 'Luis', avatar: '/luis.png' }}
+  date="2025-06-18T13:00:00Z"
+  text="Mira este enlace: https://ejemplo.com"
+  media={[{ url: '/foto.jpg', type: 'image', aspectRatio: '1:1' }]}
+  linkData={{ url: 'https://ejemplo.com', image: '/preview.jpg', title: 'Ejemplo', description: 'Descripción del enlace' }}
+  stats={{ likes: 5, comentarios: 1, compartidos: 0 }}
+  onLike={() => {}}
+  onComment={() => {}}
+  onShare={() => {}}
+/>
+
+// Post con carrusel y encuesta
+<PostCard
+  user={{ nombre: 'Sofía', avatar: '/sofia.png' }}
+  date="2025-06-18T14:00:00Z"
+  text="¿Cuál prefieres?"
+  media={[
+    { url: '/img1.jpg', type: 'image', aspectRatio: '4:5' },
+    { url: '/img2.jpg', type: 'image', aspectRatio: '1.91:1' }
+  ]}
+  pollData={{
+    question: 'Elige una opción',
+    options: [
+      { id: '1', text: 'Opción 1', votes: 3 },
+      { id: '2', text: 'Opción 2', votes: 7 }
+    ],
+    totalVotes: 10
+  }}
+  stats={{ likes: 8, comentarios: 3, compartidos: 2, votos: 10 }}
+  onLike={() => {}}
+  onComment={() => {}}
+  onShare={() => {}}
+  onVote={id => {}}
+/>
+*/

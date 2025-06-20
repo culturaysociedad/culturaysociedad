@@ -84,7 +84,6 @@ const HomePage = () => {
       {/* Formulario para crear post */}
       <div className="w-full">
         <CreatePostForm 
-          className="rounded-none mx-0"
           onSuccess={() => {
             setTimeout(() => {
               const firstPost = document.querySelector('.feed-item');
@@ -173,7 +172,22 @@ const HomePage = () => {
         <div className="w-full">
           {sortedFeed.map((item) => {
             if (item.type === 'post' && 'post' in item) {
-              return <PostCard key={item.post.id} post={item.post} onDeleted={() => setLocalPosts((prev) => prev.filter((p) => p.id !== item.post.id))} />;
+              const post = item.post;
+              return (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  user={{
+                    id: post.userId,
+                    nombre: 'Usuario',
+                    avatar: '/default-avatar.png',
+                    verificado: false
+                  }}
+                  media={post.mediaUrls?.map(m => ({ url: m.url, type: 'image', aspectRatio: '1:1', name: m.name }))}
+                  text={post.content}
+                  onDeleted={() => setLocalPosts((prev) => prev.filter((p) => p.id !== post.id))}
+                />
+              );
             }
             if (item.type === 'event' && 'event' in item) {
               return <EventoCulturalCard key={item.event.id} event={{
