@@ -327,7 +327,7 @@ const BlogDetailPage: React.FC = () => {
     canDelete: !!(user && c.autor_id === user.id)
   }));
   const reactionsData: ReactionData[] = [
-    { emoji: '❤️', count: likes.length, reacted: isLiked },
+    { emoji: '❤️', count: likes.length, reacted: isLiked, id: blog?.id }, // id de la reacción = id del blog
     // TODO: mapear otros tipos de reacciones si existen
   ];
 
@@ -352,7 +352,7 @@ const BlogDetailPage: React.FC = () => {
           <span className="font-medium text-gray-900 dark:text-white text-sm">{blog.authorName}</span>
         </div>
         <div className="flex items-center gap-4 text-xs text-gray-500 mb-4">
-          <ReactionsBar reactions={reactionsData} onReact={handleLike} />
+          <ReactionsBar reactions={reactionsData} onReact={handleLike} reactionKind="blog" />
           <button onClick={handleShare} className="flex items-center group" title="Compartir">
             <Share2 className="h-5 w-5 text-gray-600 dark:text-gray-400 group-hover:text-primary-500" />
           </button>

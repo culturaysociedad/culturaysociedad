@@ -303,8 +303,8 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
     canDelete: !!(currentUser && c.userId === currentUser.id)
   }));
   const reactionsData: ReactionData[] = [
-    { emoji: '❤️', count: likes.length, reacted: isLiked },
-    // TODO: mapear otros tipos de reacciones si existen
+    { emoji: '❤️', count: likes.length, reacted: isLiked, id: post.id }, // id de la reacción = id del post para reportar
+    // TODO: mapear otros tipos de reacciones
   ];
   
   // Definir handleEditComment en el scope correcto
@@ -498,7 +498,7 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
         <span>{text}</span>
       </div>
       <div className="flex items-center gap-2 py-2 px-4 justify-start">
-        <ReactionsBar reactions={reactionsData} onReact={handleLike} />
+        <ReactionsBar reactions={reactionsData} onReact={handleLike} reactionKind="post" />
         <button
           className="flex items-center gap-1 text-gray-500 hover:text-primary-600 text-sm font-medium focus:outline-none"
           onClick={() => setIsCommentExpanded((v) => !v)}

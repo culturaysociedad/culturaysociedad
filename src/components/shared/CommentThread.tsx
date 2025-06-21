@@ -37,6 +37,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({ comments, onReply, onEdit
   const user = useAuthStore.getState().user;
   const [reportingId, setReportingId] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState('');
+  const [customReportReason, setCustomReportReason] = useState('');
 
   // Detectar comentarios nuevos para animación
   useEffect(() => {
@@ -128,15 +129,27 @@ const CommentThread: React.FC<CommentThreadProps> = ({ comments, onReply, onEdit
           {reportingId === comment.id && (
             <div className="mt-2 p-2 border rounded bg-orange-50 dark:bg-orange-900/20">
               <div className="mb-2 text-xs">Motivo del reporte:</div>
-              <input
+              <select
                 className="border rounded px-2 py-1 text-xs w-full mb-2"
                 value={reportReason}
                 onChange={e => setReportReason(e.target.value)}
-                placeholder="Describe el motivo (spam, insultos, etc)"
-                maxLength={200}
-              />
+              >
+                <option value="">Selecciona un motivo</option>
+                {REPORT_REASONS.map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              {reportReason === 'Otro' && (
+                <input
+                  className="border rounded px-2 py-1 text-xs w-full mb-2"
+                  value={customReportReason}
+                  onChange={e => setCustomReportReason(e.target.value)}
+                  placeholder="Describe el motivo (opcional)"
+                  maxLength={200}
+                />
+              )}
               <div className="flex gap-2">
-                <button className="text-xs text-orange-600 font-bold py-1 px-2 rounded bg-orange-100 hover:bg-orange-200" onClick={() => handleReport(comment.id)}>Enviar</button>
+                <button className="text-xs text-orange-600 font-bold py-1 px-2 rounded bg-orange-100 hover:bg-orange-200" onClick={() => handleReport(comment.id)} disabled={!reportReason || (reportReason === 'Otro' && !customReportReason.trim())}>Enviar</button>
                 <button className="text-xs text-gray-400 py-1 px-2 rounded" onClick={() => setReportingId(null)}>Cancelar</button>
               </div>
             </div>
@@ -202,6 +215,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({ comments, onReply, onEdit
     toast.success('Comentario reportado. ¡Gracias por tu ayuda!');
     setReportingId(null);
     setReportReason('');
+    setCustomReportReason('');
   };
 
   // Lista simple de palabras prohibidas (puedes ampliar)
@@ -210,6 +224,14 @@ const CommentThread: React.FC<CommentThreadProps> = ({ comments, onReply, onEdit
     const lower = text.toLowerCase();
     return BAD_WORDS.some(w => lower.includes(w));
   }
+
+  const REPORT_REASONS = [
+    'Incitación al odio',
+    'Mentira o información falsa',
+    'Ofensivo',
+    'Spam',
+    'Otro'
+  ];
 
   return <div className="space-y-4">{renderComments(comments)}</div>;
 };

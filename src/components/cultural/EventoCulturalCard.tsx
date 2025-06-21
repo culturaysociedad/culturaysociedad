@@ -243,7 +243,7 @@ const EventoCulturalCard: React.FC<EventoCulturalCardProps> = ({ event, onEdit, 
     canDelete: !!(user && c.autor_id === user.id)
   }));
   const reactionsData: ReactionData[] = [
-    { emoji: '❤️', count: likes.length, reacted: isLiked },
+    { emoji: '❤️', count: likes.length, reacted: isLiked, id: event.id }, // id de la reacción = id del evento
     // TODO: mapear otros tipos de reacciones si existen
   ];
 
@@ -397,7 +397,7 @@ const EventoCulturalCard: React.FC<EventoCulturalCardProps> = ({ event, onEdit, 
 
         {/* Reacciones y comentarios */}
         <div className="flex items-center space-x-6 mb-4">
-          <ReactionsBar reactions={reactionsData} onReact={handleLike} />
+          <ReactionsBar reactions={reactionsData} onReact={handleLike} reactionKind="evento" />
         </div>
         {isCommentExpanded && (
           <div className="mt-4">
