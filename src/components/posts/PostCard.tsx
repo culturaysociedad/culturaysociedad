@@ -30,7 +30,6 @@ interface PostCardProps {
 }
 
 const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDeleted, user, media, text, backgroundColor, linkData, pollData, onVote }) => {
-  const [isCommentExpanded, setIsCommentExpanded] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [postUser, setPostUser] = useState<any>(null);
   const [commentUsers, setCommentUsers] = useState<Record<string, any>>({});
@@ -453,11 +452,7 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
         <button
           className="flex items-center gap-1 text-gray-500 hover:text-primary-600 text-sm font-medium focus:outline-none"
           onClick={() => {
-            if (isMobile) {
-              setShowCommentsModal(true);
-            } else {
-              setIsCommentExpanded((v) => !v);
-            }
+            setShowCommentsModal(true);
           }}
           aria-label="Mostrar comentarios"
           type="button"
@@ -468,13 +463,14 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
           )}
         </button>
       </div>
-      {/* Modal de comentarios para móvil */}
-      {isMobile && (
+      {/* Modal de comentarios universal (móvil y escritorio) */}
+      {(isMobile || !isMobile) && (
         <BottomSheetModal
           open={showCommentsModal}
           onClose={() => setShowCommentsModal(false)}
           title="Comentarios"
-          height="80vh"
+          height={isMobile ? '80vh' : '70vh'}
+          desktopMode={!isMobile}
         >
           <CommentThread
             comments={commentThreadData}
@@ -547,80 +543,7 @@ const PostCard: React.FC<PostCardProps> = ({ post, disableCardNavigation, onDele
           )}
         </BottomSheetModal>
       )}
-      {/* Comentarios en escritorio */}
-      {(!isMobile && (comments.length > 0 || isCommentExpanded)) && (
-        <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-b-xl border-t border-gray-200 dark:border-gray-700 transition-all duration-300">
-          <CommentThread
-            comments={commentThreadData}
-            onEdit={handleEditComment}
-            onReply={handleReplyComment}
-          />
-        </div>
-      )}
-      {(!isMobile && currentUser) && (
-        <form onSubmit={handleComment} className="flex items-center space-x-2 relative mt-2">
-          <div className="avatar w-9 h-9">
-            <img 
-              src={currentUser.avatar || '/default-avatar.png'} 
-              alt={currentUser.displayName || 'Usuario'} 
-              className="avatar-img rounded-full object-cover border border-primary-200 dark:border-primary-700"
-            />
-          </div>
-          <input
-            type="text"
-            placeholder="Añade un comentario..."
-            className={`flex-1 bg-white dark:bg-gray-900 rounded-full px-4 py-2 text-sm border border-gray-300 dark:border-gray-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 shadow-sm transition-all ${commentError ? 'border-red-500' : ''}`}
-            value={commentText}
-            onChange={handleInputChange}
-            maxLength={300}
-            autoComplete="off"
-            disabled={isLoadingComment}
-            aria-invalid={!!commentError}
-            ref={commentInputRef}
-          />
-          {/* Lista de menciones */}
-          {showMentionList && mentionResults.length > 0 && (
-            <div className="absolute z-50 bottom-12 left-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg w-64 max-h-60 overflow-y-auto">
-              {mentionResults.map(user => (
-                <button
-                  key={user.id}
-                  className="flex items-center w-full px-3 py-2 hover:bg-primary-50 dark:hover:bg-primary-900/30 gap-2 text-left"
-                  onClick={() => handleMentionSelect(user)}
-                  type="button"
-                >
-                  <img src={user.avatar_url || '/default-avatar.png'} alt={user.nombre_usuario} className="w-6 h-6 rounded-full" />
-                  <span className="font-medium">@{user.nombre_usuario}</span>
-                  <span className="text-xs text-gray-400 ml-2">{user.nombre_completo}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
-            onClick={() => setShowEmojiPicker((v) => !v)}
-            aria-label="Insertar emoji"
-            tabIndex={-1}
-          >
-            <span role="img" aria-label="emoji">😊</span>
-          </button>
-          <button 
-            type="submit"
-            disabled={!commentText.trim() || isLoadingComment}
-            className="text-sm font-bold text-primary-600 dark:text-primary-400 disabled:opacity-50 px-3 py-1 rounded-full bg-primary-50 dark:bg-primary-900 hover:bg-primary-100 dark:hover:bg-primary-800 transition-all"
-          >
-            {isLoadingComment ? '...' : 'Publicar'}
-          </button>
-          {showEmojiPicker && (
-            <div className="absolute z-50 bottom-12 right-0">
-              <Picker data={data} onEmojiSelect={handleEmojiSelect} theme="auto" />
-            </div>
-          )}
-          {commentError && (
-            <span className="absolute left-0 -bottom-6 text-xs text-red-500 font-medium">{commentError}</span>
-          )}
-        </form>
-      )}
+      {/* Ya no se muestran comentarios ni caja de comentario en la tarjeta */}
     </article>
   );
 };
