@@ -17,6 +17,7 @@ import ReactionsBar, { ReactionData } from '../shared/ReactionsBar';
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { useDebounce } from 'use-debounce';
+import BottomSheetModal from '../shared/BottomSheetModal';
 
 interface EventoCulturalCardProps {
   event: {
@@ -61,6 +62,8 @@ const EventoCulturalCard: React.FC<EventoCulturalCardProps> = ({ event, onEdit, 
   const { user } = useAuthStore();
   const isCreator = user && event.userId && user.id === event.userId;
   const isLiked = user ? likes.includes(user.id) : false;
+  const [showCommentsModal, setShowCommentsModal] = useState(false);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
   React.useEffect(() => {
     // Cargar comentarios y usuarios
@@ -398,15 +401,110 @@ const EventoCulturalCard: React.FC<EventoCulturalCardProps> = ({ event, onEdit, 
         {/* Reacciones y comentarios */}
         <div className="flex items-center space-x-6 mb-4">
           <ReactionsBar reactions={reactionsData} onReact={handleLike} reactionKind="evento" />
+          <button
+            className="flex items-center gap-1 text-gray-500 hover:text-primary-600 text-sm font-medium focus:outline-none"
+            onClick={() => {
+              if (isMobile) {
+                setShowCommentsModal(true);
+              } else {
+                setIsCommentExpanded((v) => !v);
+              }
+            }}
+            aria-label="Mostrar comentarios"
+            type="button"
+          >
+            <MessageCircle className="w-5 h-5" />
+            {comments.length > 0 && (
+              <span className="ml-1 text-xs bg-gray-200 dark:bg-gray-700 rounded-full px-2 py-0.5">{comments.length}</span>
+            )}
+          </button>
         </div>
-        {isCommentExpanded && (
+        {/* Modal de comentarios para móvil */}
+        {isMobile && (
+          <BottomSheetModal
+            open={showCommentsModal}
+            onClose={() => setShowCommentsModal(false)}
+            title="Comentarios"
+            height="80vh"
+          >
+            <CommentThread
+              comments={commentThreadData}
+              onEdit={handleEditComment}
+              onDelete={handleDeleteComment}
+              onReply={handleReplyComment}
+            />
+            {user && (
+              <form onSubmit={handleAddComment} className="mt-4">
+                <div className="flex items-center space-x-3">
+                  <div className="flex-shrink-0">
+                    <img
+                      src={user.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.displayName || '')}
+                      alt={user.displayName || 'Usuario'}
+                      className="h-8 w-8 rounded-full object-cover"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <textarea
+                      ref={commentInputRef}
+                      value={newComment}
+                      onChange={handleTextareaChange}
+                      className="w-full p-3 text-sm rounded-lg border focus:outline-none focus:ring-1 focus:ring-primary-500 resize-none"
+                      rows={2}
+                      placeholder="Escribe un comentario..."
+                      aria-label="Escribe un comentario"
+                    />
+                    {/* Lista de menciones */}
+                    {showMentionList && mentionResults.length > 0 && (
+                      <div className="absolute z-50 bottom-12 left-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg w-64 max-h-60 overflow-y-auto">
+                        {mentionResults.map(user => (
+                          <button
+                            key={user.id}
+                            className="flex items-center w-full px-3 py-2 hover:bg-primary-50 dark:hover:bg-primary-900/30 gap-2 text-left"
+                            onClick={() => handleMentionSelect(user)}
+                            type="button"
+                          >
+                            <img src={user.avatar_url || '/default-avatar.png'} alt={user.nombre_usuario} className="w-6 h-6 rounded-full" />
+                            <span className="font-medium">@{user.nombre_usuario}</span>
+                            <span className="text-xs text-gray-400 ml-2">{user.nombre_completo}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => setShowEmojiPicker((v) => !v)}
+                      aria-label="Insertar emoji"
+                      tabIndex={-1}
+                    >
+                      <span role="img" aria-label="emoji">😊</span>
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      aria-label="Agregar comentario"
+                    >
+                      <Send className="h-5 w-5" />
+                    </button>
+                    {showEmojiPicker && (
+                      <div className="absolute z-50 bottom-12 right-0">
+                        <Picker data={data} onEmojiSelect={handleEmojiSelect} theme="auto" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </form>
+            )}
+          </BottomSheetModal>
+        )}
+        {/* Comentarios y caja de comentario solo en escritorio */}
+        {(!isMobile && isCommentExpanded) && (
           <div className="mt-4">
             <CommentThread
               comments={commentThreadData}
               onEdit={handleEditComment}
               onDelete={handleDeleteComment}
               onReply={handleReplyComment}
-              currentUserId={user ? user.id : undefined}
             />
             {user && (
               <form onSubmit={handleAddComment} className="mt-4">
