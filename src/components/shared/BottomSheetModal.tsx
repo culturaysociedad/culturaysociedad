@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface BottomSheetModalProps {
   open: boolean;
@@ -10,6 +10,10 @@ interface BottomSheetModalProps {
 }
 
 const BottomSheetModal: React.FC<BottomSheetModalProps> = ({ open, onClose, title, children, height = '70vh', desktopMode = false }) => {
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     const handleEsc = (e: KeyboardEvent) => {
@@ -18,6 +22,34 @@ const BottomSheetModal: React.FC<BottomSheetModalProps> = ({ open, onClose, titl
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
   }, [open, onClose]);
+
+  // Swipe down para cerrar (solo móvil)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (desktopMode) return;
+    setDragging(true);
+    setDragY(e.touches[0].clientY);
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!dragging || desktopMode) return;
+    const deltaY = e.touches[0].clientY - dragY;
+    if (deltaY > 0 && sheetRef.current) {
+      sheetRef.current.style.transform = `translateY(${deltaY}px)`;
+      sheetRef.current.style.transition = 'none';
+    }
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!dragging || desktopMode) return;
+    const endY = e.changedTouches[0].clientY;
+    const deltaY = endY - dragY;
+    setDragging(false);
+    if (sheetRef.current) {
+      sheetRef.current.style.transition = '';
+      sheetRef.current.style.transform = '';
+    }
+    if (deltaY > 80) {
+      onClose();
+    }
+  };
 
   if (!open) return null;
 
@@ -29,8 +61,12 @@ const BottomSheetModal: React.FC<BottomSheetModalProps> = ({ open, onClose, titl
         aria-label="Cerrar comentarios"
       />
       <div
+        ref={sheetRef}
         className={`relative bg-white dark:bg-gray-900 shadow-lg animate-slideUp ${desktopMode ? 'rounded-2xl w-full max-w-lg mx-auto' : 'rounded-t-2xl w-full max-w-md mx-auto'}`}
         style={desktopMode ? { height: '70vh', maxHeight: '90vh', overflow: 'hidden' } : { height, maxHeight: '90vh', overflow: 'hidden' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         <div className="flex flex-col h-full">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">

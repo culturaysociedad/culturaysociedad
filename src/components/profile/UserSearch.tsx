@@ -117,26 +117,27 @@ const UserSearch = ({ onSelectUser }: UserSearchProps): JSX.Element => {
         {loading && <span className="ml-2 text-xs text-gray-400">Buscando...</span>}
       </div>
       {showDropdown && results.length > 0 && (
-        <div ref={dropdownRef} className="absolute left-0 right-0 mt-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto animate-fade-in">
+        <div ref={dropdownRef} className="absolute left-0 right-0 mt-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl z-50 max-h-80 overflow-y-auto animate-fade-in p-2">
           {results.map((user, idx) => (
             <div
               key={user.id}
-              className={`flex items-center px-4 py-2 cursor-pointer hover:bg-primary-50 dark:hover:bg-gray-800 ${highlighted === idx ? 'bg-primary-100 dark:bg-gray-800' : ''}`}
+              className={`flex items-center gap-4 px-4 py-3 cursor-pointer rounded-lg transition-all hover:bg-primary-50 dark:hover:bg-gray-800 ${highlighted === idx ? 'bg-primary-100 dark:bg-gray-800' : ''}`}
               onMouseDown={() => {
                 setShowDropdown(false);
                 if (onSelectUser) onSelectUser(user);
               }}
               onMouseEnter={() => setHighlighted(idx)}
+              style={{ marginBottom: 4 }}
             >
               <img
                 src={user.avatar_url || '/default-avatar.png'}
                 alt={user.nombre_completo || user.nombre_usuario}
-                className="w-8 h-8 rounded-full mr-3"
+                className="w-12 h-12 rounded-full object-cover border-2 border-primary-200 dark:border-primary-800 shadow-sm"
               />
-              <div className="flex flex-col">
-                <span className="font-medium text-sm">{highlight(user.nombre_completo || user.nombre_usuario, query)}</span>
-                <span className="text-xs text-gray-500">@{highlight(user.nombre_usuario, query)}</span>
-                {user.email && <span className="text-xs text-gray-400">{highlight(user.email, query)}</span>}
+              <div className="flex flex-col min-w-0">
+                <span className="font-semibold text-base truncate text-gray-900 dark:text-gray-100">{highlight(user.nombre_completo || user.nombre_usuario, query)}</span>
+                <span className="text-xs text-blue-600 dark:text-blue-300 truncate">@{highlight(user.nombre_usuario, query)}</span>
+                {user.email && <span className="text-xs text-gray-400 truncate">{highlight(user.email, query)}</span>}
               </div>
             </div>
           ))}
